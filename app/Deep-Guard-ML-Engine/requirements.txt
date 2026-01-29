@@ -4,7 +4,6 @@ fastapi[standard]>=0.85.0
 uvicorn>=0.18.0
 
 # ML runtime
-mtcnn>=0.1.1
 tflite-runtime>=2.14.0
 
 # Image / video processing
