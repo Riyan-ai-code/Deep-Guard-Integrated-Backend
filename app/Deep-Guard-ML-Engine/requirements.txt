@@ -4,24 +4,19 @@ fastapi[standard]>=0.85.0
 uvicorn>=0.18.0
 
 # ML runtime
-tensorflow-cpu>=2.10.0
-
-# TFLite runtime (optional - some deployments prefer this lighter package)
-# tflite-runtime==2.11.0
+mtcnn>=0.1.1
+tflite-runtime>=2.14.0
 
 # Image / video processing
-opencv-python>=4.6.0
+opencv-python-headless>=4.6.0
 pillow>=9.0.0
-numpy>=1.23.0
+
+# 🔴 FIX: Pin NumPy to 1.x to prevent TFLite crash
+numpy<2.0.0
 
 # Utilities
 pydantic>=1.8.0
-mediapipe>=0.8.10
-mtcnn>=0.1.1
 python-multipart>=0.0.5
 
-# Optional / server-friendly alternatives
-# opencv-python-headless>=4.6.0   # use this on headless servers to avoid GUI deps
-# pandas>=1.4.0                  # if you need CSV/dataframe helpers
-# tqdm>=4.64.0                   # progress bars for long-running scripts
-
+# Face Detection
+mediapipe==0.10.9

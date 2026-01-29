@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Make ML engine import paths point to the correct root
-export PYTHONPATH="/usr/src/app/app/Deep_Guard_ML_Engine"
+export PYTHONPATH="/usr/src/app/app/Deep-Guard-ML-Engine"
 
 # Start ML engine
 uvicorn app.main:app --host 0.0.0.0 --port 8000 &

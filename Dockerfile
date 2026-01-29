@@ -14,14 +14,14 @@ RUN apt-get update && \
 WORKDIR /usr/src/app
 
 # Install ML dependencies
-COPY app/Deep_Guard_ML_Engine/requirements.txt ./ml-requirements.txt
+COPY app/Deep-Guard-ML-Engine/requirements.txt ./ml-requirements.txt
 RUN pip install --no-cache-dir -r ml-requirements.txt
 
 # Copy full app (backend + ML)
 COPY app ./app
 
 # 🔥 FIX: Copy ML model to the path expected by the ML code
-COPY app/Deep_Guard_ML_Engine/app/model ./app/model
+COPY app/Deep-Guard-ML-Engine/app/model ./app/model
 
 # Install backend dependencies
 RUN cd app/Deep-Guard-Backend && npm install --omit=dev --no-audit --no-fund
