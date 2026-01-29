@@ -3,11 +3,13 @@ const jwt = require("jsonwebtoken");
 const { supabase } = require("../config/supabase");
 const crypto = require("crypto");
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 // Must match controller cookie options
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: true,
-  sameSite: "none",
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
   path: "/",
 };
 
@@ -18,6 +20,24 @@ const authMiddleware = async (req, res, next) => {
   try {
     const accessToken = req.cookies.accessToken || null;
     const refreshToken = req.cookies.refreshToken || null;
+
+    // START TRIAL AUTH CHECK
+    const trialToken = req.cookies.trialAccess;
+    if (trialToken) {
+      try {
+        const decodedTrial = jwt.verify(trialToken, process.env.JWT_SECRET);
+        // If valid, short-circuit standard auth
+        req.user = {
+          id: 'trial_user',
+          name: 'Guest User',
+          email: 'guest@trial.com',
+          isTrial: true,
+          trialSessionId: decodedTrial.sessionId
+        };
+        return next();
+      } catch (e) { /* ignore and proceed to standard auth */ }
+    }
+    // END TRIAL AUTH CHECK
 
     if (!accessToken && !refreshToken) {
       return res.status(401).json({
@@ -111,8 +131,12 @@ const authMiddleware = async (req, res, next) => {
       }
 
       // ----------------------------------------------------
-      // 3. ROTATE REFRESH TOKEN
+      // 3. ROTATE REFRESH TOKEN (With Grace Period)
       // ----------------------------------------------------
+      // To prevent race conditions with parallel requests, we:
+      // 1. Create a NEW session with the new token
+      // 2. Delete the OLD session after a short delay (Grace Period)
+
       const newRefreshToken = jwt.sign(
         {
           userId: refreshDecoded.userId,
@@ -125,15 +149,26 @@ const authMiddleware = async (req, res, next) => {
 
       const newHash = hashToken(newRefreshToken);
 
-      await supabase
-        .from("sessions")
-        .update({
-          refresh_token_hash: newHash,
-          user_agent: req.headers["user-agent"],
-          ip_address: req.ip,
-          expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
-        })
-        .eq("id", session.id);
+      // Create NEW session
+      await supabase.from("sessions").insert({
+        user_id: refreshDecoded.userId,
+        refresh_token_hash: newHash,
+        token_version_snapshot: userData.token_version,
+        user_agent: req.headers["user-agent"],
+        ip_address: req.ip,
+        expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      });
+
+      // Mark old session for deletion (Grace Period of 10 seconds)
+      // This allows parallel requests matching the old hash to still proceed 
+      // (by creating their own forked sessions) instead of failing immediately.
+      setTimeout(async () => {
+        try {
+          await supabase.from("sessions").delete().eq("id", session.id);
+        } catch (e) {
+          console.error("Failed to cleanup old session:", e);
+        }
+      }, 10000); // 10 seconds grace period
 
       res.cookie("refreshToken", newRefreshToken, {
         ...COOKIE_OPTS,

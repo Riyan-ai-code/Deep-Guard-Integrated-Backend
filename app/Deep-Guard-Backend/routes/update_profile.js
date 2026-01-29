@@ -19,6 +19,17 @@ const formatUser = (user) => ({
 // ------------------------------------
 router.get("/me", requireAuth, async (req, res) => {
   try {
+    // START TRIAL CHECK
+    if (req.user?.isTrial) {
+      return res.json({
+        id: 'trial_user',
+        name: 'Guest User',
+        email: 'guest@trial.com',
+        profile_pic: `https://api.dicebear.com/7.x/avataaars/svg?seed=guest`,
+      });
+    }
+    // END TRIAL CHECK
+
     const { data, error } = await supabase
       .from("users")
       .select("id, name, email, profile_picture")
@@ -45,6 +56,20 @@ router.get("/me", requireAuth, async (req, res) => {
 // ------------------------------------
 router.put("/update-profile", requireAuth, async (req, res) => {
   try {
+    // START TRIAL CHECK
+    if (req.user?.isTrial) {
+      return res.json({
+        success: true,
+        user: {
+          id: 'trial_user',
+          name: req.body.name || 'Guest User',
+          email: 'guest@trial.com',
+          profile_picture: req.body.profile_pic || 'https://api.dicebear.com/7.x/avataaars/svg?seed=guest',
+        }
+      });
+    }
+    // END TRIAL CHECK
+
     const { name, profile_pic } = req.body;
 
     const updateFields = {};
@@ -82,6 +107,10 @@ router.put("/update-profile", requireAuth, async (req, res) => {
 // ------------------------------------
 router.post("/change-password", requireAuth, async (req, res) => {
   try {
+    if (req.user?.isTrial) {
+      return res.status(403).json({ message: "Trial users cannot change password." });
+    }
+
     const { current_password, new_password } = req.body;
 
     const { data: user } = await supabase
@@ -112,6 +141,10 @@ router.post("/change-password", requireAuth, async (req, res) => {
 });
 router.delete("/delete-analyses", requireAuth, async (req, res) => {
   try {
+    if (req.user?.isTrial) {
+      return res.json({ success: true, message: "Trial session has no persistent history." });
+    }
+
     const { error } = await supabase
       .from("analyses")
       .delete()
@@ -156,6 +189,7 @@ router.post("/logout-all", requireAuth, async (req, res) => {
     // 3. Clear cookies from current device
     res.clearCookie("accessToken");
     res.clearCookie("refreshToken");
+    res.clearCookie("trialAccess");
 
     return res.json({
       success: true,
@@ -170,6 +204,11 @@ router.post("/logout-all", requireAuth, async (req, res) => {
 
 router.delete("/delete-account", requireAuth, async (req, res) => {
   try {
+    if (req.user?.isTrial) {
+      res.clearCookie("trialAccess");
+      return res.json({ success: true, message: "Trial ended." });
+    }
+
     const { error } = await supabase
       .from("users")
       .delete()
@@ -179,6 +218,7 @@ router.delete("/delete-account", requireAuth, async (req, res) => {
 
     res.clearCookie("accessToken");
     res.clearCookie("refreshToken");
+    res.clearCookie("trialAccess");
 
     res.json({ success: true, message: "Account deleted." });
   } catch (err) {

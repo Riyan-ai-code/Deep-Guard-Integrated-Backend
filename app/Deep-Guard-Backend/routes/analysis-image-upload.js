@@ -32,6 +32,69 @@ router.post(
         });
       }
 
+      // ---------------------------------------------------------
+      // TRIAL USER FLOW
+      // ---------------------------------------------------------
+      if (req.user.isTrial) {
+        console.log('🧪 Processing TRIAL IMAGE upload');
+        const sessionId = req.user.trialSessionId;
+        const { v4: uuidv4 } = require('uuid');
+
+        // 1. Check Limits
+        const { data: session, error: sessionErr } = await supabaseAdmin
+          .from('trial_sessions')
+          .select('*')
+          .eq('id', sessionId)
+          .single();
+
+        if (sessionErr || !session) return res.status(401).json({ success: false, message: "Trial session not found" });
+
+        if (session.analysis_count >= 100) {
+          return res.status(403).json({ success: false, message: "Trial limit reached." });
+        }
+
+        // 2. Upload ALL images
+        const analysisId = uuidv4();
+        const uploadedPaths = [];
+        const bucketName = 'trial_analyses';
+
+        for (const file of req.files) {
+          const cleanName = file.originalname.replace(/[^a-zA-Z0-9\.]/g, "_");
+          const uploadPath = `${sessionId}/${analysisId}/${Date.now()}_${cleanName}`;
+
+          const { error: uploadErr } = await supabaseAdmin.storage
+            .from(bucketName)
+            .upload(uploadPath, file.buffer, {
+              contentType: file.mimetype || "image/jpeg",
+            });
+
+          if (uploadErr) {
+            console.error('Trial upload failed:', uploadErr);
+            return res.status(500).json({ success: false, message: 'Upload failed' });
+          }
+          uploadedPaths.push(uploadPath);
+        }
+
+        // 3. Increment Count
+        await supabaseAdmin
+          .from('trial_sessions')
+          .update({ analysis_count: session.analysis_count + 1 })
+          .eq('id', sessionId);
+
+        // 4. Construct Stateless ID
+        // Format: trial|image|<bucket>|<json_paths>
+        const pathsStr = JSON.stringify(uploadedPaths);
+        const rawId = `trial|image|${bucketName}|${pathsStr}`;
+        const encodedId = Buffer.from(rawId).toString('base64');
+
+        return res.json({
+          success: true,
+          analysis_id: encodedId,
+          images_uploaded: uploadedPaths.length,
+        });
+      }
+      // ---------------------------------------------------------
+
       // ------------------ 1. PREPARE ANALYSIS ENTRY ------------------
       // The `analyses` table requires non-null filename, file_path and file_size.
       // Compute summary info from incoming files so we can insert a valid row

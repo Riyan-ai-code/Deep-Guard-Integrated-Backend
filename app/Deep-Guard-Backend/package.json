@@ -14,9 +14,9 @@
 	"license": "ISC",
 	"type": "commonjs",
 	"dependencies": {
-		"@supabase/supabase-js": "^2.78.0",
+		"@supabase/supabase-js": "^2.93.2",
 		"adm-zip": "^0.5.16",
-		"axios": "^1.13.2",
+		"axios": "^1.13.4",
 		"bcryptjs": "^3.0.2",
 		"cookie-parser": "^1.4.7",
 		"cors": "^2.8.5",

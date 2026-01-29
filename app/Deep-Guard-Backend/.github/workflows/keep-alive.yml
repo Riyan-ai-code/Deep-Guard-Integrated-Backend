@@ -1,0 +1,28 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Runs every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping_supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Edge Function
+        run: |
+          # Replace with your actual deployed Edge Function URL
+          # You can store the URL in secrets if you prefer: ${{ secrets.SUPABASE_FUNCTION_URL }}
+          FUNCTION_URL="https://flrnaojnsxedvulogeqr.supabase.co/functions/v1/keep-alive"
+          
+          # Use curl to hit the endpoint. 
+          # To be secure, you should ideally pass an Authorization header with a Service Key if RLS is strict,
+          # but for a simple keep-alive on a public function, a specific Authorization header might be needed 
+          # depending on your function's security settings (Verify Signature or Anon Key).
+          # Below adds the Anon key if you store it in secrets, or you can disable 'Verify JWT' for this function.
+          
+          curl -X POST $FUNCTION_URL \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -H "Content-Type: application/json" \
+          --fail

@@ -17,7 +17,7 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
 
   try {
     console.log(`\n🔴 ML ROUTE HIT: ${req.method} ${req.path}`);
-    
+
     const { analysisId } = req.params;
     const userId = req.user?.id;
     const { frames_to_analyze } = req.body;
@@ -30,28 +30,61 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated' });
     }
 
-    // Get analysis record
-    const { data: analysis, error: selectError } = await supabaseAdmin
-      .from('analyses')
-      .select('*')
-      .eq('id', analysisId)
-      .eq('user_id', userId)
-      .single();
+    // ---------------------------------------------------------
+    // TRIAL / STATELESS FLOW
+    // ---------------------------------------------------------
+    let analysis = {};
+    let isTrialStateless = false;
 
-    if (selectError || !analysis) {
-      console.error('❌ Analysis not found:', selectError);
-      return res.status(404).json({ message: 'Analysis not found' });
+    // Check if ID is encoded (starts with "dHJpYWw") 'trial' in base64 is 'dHJpYWw='
+    // But better to check req.user.isTrial AND try to decode.
+    if (req.user?.isTrial) {
+      try {
+        const decoded = Buffer.from(analysisId, 'base64').toString('utf8');
+        if (decoded.startsWith('trial|video|')) {
+          console.log('🧪 Processing TRIAL VIDEO analysis (Stateless)');
+          isTrialStateless = true;
+          const parts = decoded.split('|');
+          // Format: trial|video|bucket|path
+          const bucket = parts[2];
+          const path = parts.slice(3).join('|'); // Join back in case path has pipes (unlikely but safe)
+
+          analysis = {
+            id: analysisId,
+            bucket: bucket,
+            file_path: path,
+            filename: path.split('/').pop(),
+          };
+        }
+      } catch (e) {
+        console.log('Not a stateless ID, proceeding normally...');
+      }
     }
 
-    console.log(`✅ Found analysis`);
+    if (!isTrialStateless) {
+      // STANDARD FLOW
+      // Get analysis record
+      const { data: dbAnalysis, error: selectError } = await supabaseAdmin
+        .from('analyses')
+        .select('*')
+        .eq('id', analysisId)
+        .eq('user_id', userId)
+        .single();
 
-    // Update status to processing
-    const { error: statusError1 } = await supabaseAdmin
-      .from('analyses')
-      .update({ status: 'processing' })
-      .eq('id', analysisId);
+      if (selectError || !dbAnalysis) {
+        console.error('❌ Analysis not found:', selectError);
+        return res.status(404).json({ message: 'Analysis not found' });
+      }
+      analysis = dbAnalysis;
+      console.log(`✅ Found analysis`);
 
-    if (statusError1) console.warn('⚠️ Status update warning:', statusError1.message);
+      // Update status to processing
+      await supabaseAdmin
+        .from('analyses')
+        .update({ status: 'processing' })
+        .eq('id', analysisId);
+    }
+
     console.log(`⏳ Status: processing`);
 
     // Download video
@@ -103,7 +136,7 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
     // ✅ EXTRACT confidence_report.json from ZIP FIRST
     let confidenceReport = null;
     const zipBuffer = mlResponse.data;
-    
+
     try {
       const zip = new AdmZip(zipBuffer);
       const zipEntries = zip.getEntries();
@@ -116,7 +149,7 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
           try {
             const jsonContent = entry.getData().toString('utf8');
             console.log(`📄 Raw JSON:`, jsonContent.substring(0, 500));
-            
+
             confidenceReport = JSON.parse(jsonContent);
             console.log(`✅ Extracted confidence_report.json with ${confidenceReport.frame_wise_confidences?.length || 0} frames`);
             console.log(`📊 Average confidence from report: ${confidenceReport.average_confidence}`);
@@ -160,48 +193,89 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
     console.log(`   Frames: ${framesAnalyzed}`);
 
     // Save ZIP file
-    const zipPath = `${userId}/${analysisId}/annotated_frames.zip`;
+    let zipPath = `${userId}/${analysisId}/annotated_frames.zip`;
+    let storageBucket = analysis.bucket || process.env.SUPABASE_BUCKET_NAME || 'video_analyses';
+    let trialFolder = null;
+
+    if (isTrialStateless) {
+      storageBucket = analysis.bucket;
+      // analysis.file_path for trial usually includes folder: sessionId/analysisId/file
+      const folder = analysis.file_path.split('/').slice(0, -1).join('/');
+      trialFolder = folder;
+      zipPath = `${folder}/annotated_frames.zip`;
+    }
 
     console.log(`\n💾 SAVING ZIP FILE:`);
     try {
       await supabaseAdmin
         .storage
-        .from(analysis.bucket || process.env.SUPABASE_BUCKET_NAME || 'video_analyses')
+        .from(storageBucket)
         .upload(zipPath, zipBuffer, {
           contentType: 'application/zip',
           upsert: true
         });
-      
+
       console.log(`✅ ZIP uploaded: ${zipPath}`);
     } catch (zipError) {
       console.error(`⚠️ Warning: Could not save ZIP:`, zipError.message);
     }
 
     // ✅ SAVE to database
-    console.log(`\n📊 SAVING TO DATABASE:`);
-    const { error: updateError } = await supabaseAdmin
-      .from('analyses')
-      .update({
+    if (!isTrialStateless) {
+      console.log(`\n📊 SAVING TO DATABASE:`);
+      const { error: updateError } = await supabaseAdmin
+        .from('analyses')
+        .update({
+          status: 'completed',
+          is_deepfake: isDeepfake,
+          confidence_score: confidenceScore,
+          frames_to_analyze: framesAnalyzed,
+          annotated_frames_path: zipPath,
+          analysis_result: confidenceReport
+        })
+        .eq('id', analysisId)
+        .eq('user_id', userId);
+
+      if (updateError) {
+        console.error('❌ Database update error:', updateError);
+        throw updateError;
+      }
+      console.log(`✅ Database updated`);
+    } else {
+      console.log(`\n📊 SAVING RESULT TO STORAGE (Trial Stateless)`);
+      // Construct the result object that GET /:id would normally return
+      const trialResult = {
+        id: analysisId,
         status: 'completed',
         is_deepfake: isDeepfake,
         confidence_score: confidenceScore,
         frames_to_analyze: framesAnalyzed,
         annotated_frames_path: zipPath,
-        analysis_result: confidenceReport
-      })
-      .eq('id', analysisId)
-      .eq('user_id', userId);
+        analysis_result: confidenceReport,
+        filename: analysis.filename || 'Trial Video',
+        file_path: analysis.file_path,
+        bucket: storageBucket,
+        user_id: userId,
+        created_at: new Date().toISOString()
+      };
 
-    if (updateError) {
-      console.error('❌ Database update error:', updateError);
-      throw updateError;
+      const resultPath = `${trialFolder}/analysis_result.json`;
+
+      const { error: saveErr } = await supabaseAdmin.storage
+        .from(storageBucket)
+        .upload(resultPath, JSON.stringify(trialResult), {
+          contentType: 'application/json',
+          upsert: true
+        });
+
+      if (saveErr) console.error('❌ Failed to save trial result to storage:', saveErr);
+      else console.log(`✅ Result JSON saved to ${resultPath}`);
     }
 
-    console.log(`✅ Database updated`);
     console.log(`✅ Analysis COMPLETE\n`);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: {
         analysis_id: analysisId,
         is_deepfake: isDeepfake,
@@ -221,8 +295,8 @@ router.post('/:analysisId', authMiddleware, async (req, res) => {
     }
 
     if (error.code === 'ECONNREFUSED') {
-      return res.status(503).json({ 
-        success: false, 
+      return res.status(503).json({
+        success: false,
         message: 'ML service unavailable',
         debug: ML_API_URL
       });

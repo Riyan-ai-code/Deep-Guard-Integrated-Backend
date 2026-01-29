@@ -19,6 +19,10 @@ router.get("/me", authMiddleware, authController.getMe);
 router.post("/logout", authMiddleware, authController.logout);
 router.post("/logout-all", authMiddleware, authController.logoutAllDevices);
 
-// NO /refresh HERE – refresh is handled inside authMiddleware
+// REFRESH ROUTE (Explicit - for frontend recovery)
+router.post("/refresh", authController.refresh);
+
+// NO /refresh HERE – refresh is typically handled inside authMiddleware
+// but we keep the endpoint above for client-side forced refreshes.
 
 module.exports = router;

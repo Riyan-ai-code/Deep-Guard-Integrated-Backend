@@ -36,38 +36,72 @@ router.post(
         return res.status(401).json({ success: false, message: "Not authenticated" });
       }
 
-      // ------------------ 1. GET ANALYSIS ------------------
-      const { data: analysis, error: fetchErr } = await supabaseAdmin
-        .from("analyses")
-        .select("*")
-        .eq("id", analysisId)
-        .eq("user_id", userId)
-        .single();
+      let analysis = {};
+      let isTrialStateless = false;
+      let paths = [];
 
-      if (!analysis || fetchErr) {
-        return res.status(404).json({ success: false, message: "Analysis not found" });
+      // CHECK FOR TRIAL STATELESS ID "trial|image|..."
+      if (req.user?.isTrial) {
+        try {
+          const decoded = Buffer.from(analysisId, 'base64').toString('utf8');
+          if (decoded.startsWith('trial|image|')) {
+            console.log('🧪 Processing TRIAL IMAGE analysis (Stateless)');
+            isTrialStateless = true;
+            // Format: trial|image|bucket|["path1","path2"]
+            // The 4th part is the JSON array. Join the rest in case paths have |
+            const parts = decoded.split('|');
+            const bucket = parts[2];
+            const jsonPaths = parts.slice(3).join('|');
+
+            analysis = {
+              id: analysisId,
+              bucket: bucket,
+              // We don't need file_path here, we decode the array directly
+            };
+
+            paths = JSON.parse(jsonPaths);
+            console.log(`🧪 Decoded ${paths.length} image paths for trial`);
+          }
+        } catch (e) {
+          console.log('Not a stateless ID, proceeding normally:', e.message);
+        }
       }
 
-      await supabaseAdmin
-        .from("analyses")
-        .update({ status: "processing" })
-        .eq("id", analysisId);
+      if (!isTrialStateless) {
+        // ------------------ 1. GET ANALYSIS ------------------
+        const { data: dbAnalysis, error: fetchErr } = await supabaseAdmin
+          .from("analyses")
+          .select("*")
+          .eq("id", analysisId)
+          .eq("user_id", userId)
+          .single();
 
-      // ------------------ 2. GET IMAGE PATHS ------------------
-      let paths = [];
-      try {
-        paths = JSON.parse(analysis.file_path); // multiple images
-      } catch {
-        paths = [analysis.file_path]; // single image
+        if (!dbAnalysis || fetchErr) {
+          return res.status(404).json({ success: false, message: "Analysis not found" });
+        }
+        analysis = dbAnalysis;
+
+        // Update status
+        await supabaseAdmin
+          .from("analyses")
+          .update({ status: "processing" })
+          .eq("id", analysisId);
+
+        // ------------------ 2. GET IMAGE PATHS ------------------
+        try {
+          paths = JSON.parse(analysis.file_path); // multiple images
+        } catch {
+          paths = [analysis.file_path]; // single image
+        }
       }
 
       // ------------------ 3. PREP FORM DATA ------------------
       const form = new FormData();
 
       for (const p of paths) {
-       const { data: dl, error: dlErr } = await supabaseAdmin.storage
-  .from(analysis.bucket || "image_analyses")
-  .download(p);
+        const { data: dl, error: dlErr } = await supabaseAdmin.storage
+          .from(analysis.bucket || "image_analyses")
+          .download(p);
 
 
         if (dlErr) throw new Error("Failed downloading image from storage");
@@ -82,34 +116,34 @@ router.post(
       }
 
       // ------------------ 4. SEND TO FASTAPI ------------------
-   // ------------------ 4. SEND TO FASTAPI ------------------
+      // ------------------ 4. SEND TO FASTAPI ------------------
 
-// The screenshot shows FastAPI expects POST /detect/deepfake/images
-// with multipart/form-data under the "files" field.
+      // The screenshot shows FastAPI expects POST /detect/deepfake/images
+      // with multipart/form-data under the "files" field.
 
-// Ensure ML_ENDPOINT includes the expected path. If ML_URL already points
-// directly to the `/detect/deepfake/images` endpoint, use it as-is.
-const ML_ENDPOINT = ML_URL && ML_URL.endsWith("/detect/deepfake/images")
-  ? ML_URL
-  : `${ML_URL}/detect/deepfake/images`;
+      // Ensure ML_ENDPOINT includes the expected path. If ML_URL already points
+      // directly to the `/detect/deepfake/images` endpoint, use it as-is.
+      const ML_ENDPOINT = ML_URL && ML_URL.endsWith("/detect/deepfake/images")
+        ? ML_URL
+        : `${ML_URL}/detect/deepfake/images`;
 
-console.log("📤 SENDING IMAGES →", ML_ENDPOINT);
+      console.log("📤 SENDING IMAGES →", ML_ENDPOINT);
 
-let mlResponse;
-try {
-  mlResponse = await axios.post(ML_ENDPOINT, form, {
-    headers: form.getHeaders(),    // MUST forward form-data headers
-    responseType: "arraybuffer",   // FastAPI returns ZIP
-    timeout: 600000,               // 10 min
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-  });
-} catch (err) {
-  console.error("❌ FASTAPI IMAGE ERROR:", err.response?.data?.toString() || err.message);
-  throw new Error("FastAPI failed during image processing");
-}
+      let mlResponse;
+      try {
+        mlResponse = await axios.post(ML_ENDPOINT, form, {
+          headers: form.getHeaders(),    // MUST forward form-data headers
+          responseType: "arraybuffer",   // FastAPI returns ZIP
+          timeout: 600000,               // 10 min
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        });
+      } catch (err) {
+        console.error("❌ FASTAPI IMAGE ERROR:", err.response?.data?.toString() || err.message);
+        throw new Error("FastAPI failed during image processing");
+      }
 
-const zipBuffer = mlResponse.data;
+      const zipBuffer = mlResponse.data;
 
 
       // Detect JSON error instead of ZIP
@@ -145,27 +179,68 @@ const zipBuffer = mlResponse.data;
       const isDeepfake = score >= 0.5;
 
       // ------------------ 6. SAVE ZIP TO STORAGE ------------------
-      const zipPath = `${userId}/${analysisId}/annotated_images.zip`;
+      // ------------------ 6. SAVE ZIP TO STORAGE ------------------
+      let zipPath = `${userId}/${analysisId}/annotated_images.zip`;
+      let storageBucket = analysis.bucket || "image_analyses";
+      let trialFolder = null;
+
+      if (isTrialStateless) {
+        storageBucket = analysis.bucket;
+        // paths[0] is e.g. sessionId/analysisId/timestamp_filename
+        // folder is sessionId/analysisId
+        const folder = paths[0].split('/').slice(0, 2).join('/');
+        trialFolder = folder;
+        zipPath = `${folder}/annotated_images.zip`;
+      }
 
       await supabaseAdmin.storage
-.from(analysis.bucket || "image_analyses")
+        .from(storageBucket)
         .upload(zipPath, zipBuffer, {
           upsert: true,
           contentType: "application/zip",
         });
 
       // ------------------ 7. UPDATE DB ------------------
-      await supabaseAdmin
-        .from("analyses")
-        .update({
-          status: "completed",
+      if (!isTrialStateless) {
+        await supabaseAdmin
+          .from("analyses")
+          .update({
+            status: "completed",
+            is_deepfake: isDeepfake,
+            confidence_score: score,
+            annotated_images_path: zipPath,
+            analysis_result: confidenceReport,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", analysisId);
+      } else {
+        console.log(`\n📊 SAVING RESULT TO STORAGE (Trial Stateless)`);
+        const trialResult = {
+          id: analysisId,
+          status: 'completed',
           is_deepfake: isDeepfake,
           confidence_score: score,
           annotated_images_path: zipPath,
           analysis_result: confidenceReport,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", analysisId);
+          filename: "Trial Images",
+          bucket: storageBucket,
+          file_path: JSON.stringify(paths),
+          user_id: userId,
+          created_at: new Date().toISOString()
+        };
+
+        const resultPath = `${trialFolder}/analysis_result.json`;
+
+        const { error: saveErr } = await supabaseAdmin.storage
+          .from(storageBucket)
+          .upload(resultPath, JSON.stringify(trialResult), {
+            contentType: 'application/json',
+            upsert: true
+          });
+
+        if (saveErr) console.error('❌ Failed to save trial result to storage:', saveErr);
+        else console.log(`✅ Result JSON saved to ${resultPath}`);
+      }
 
       return res.json({
         success: true,
@@ -175,6 +250,7 @@ const zipBuffer = mlResponse.data;
           is_deepfake: isDeepfake,
         },
       });
+
     } catch (err) {
       console.error("❌ IMAGE ML ERROR:", err.message);
 
