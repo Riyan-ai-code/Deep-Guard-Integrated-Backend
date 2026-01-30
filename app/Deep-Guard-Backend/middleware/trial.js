@@ -11,8 +11,8 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
+  secure: true,
+  sameSite: "none",
   path: "/",
 };
 

@@ -8,8 +8,8 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Must match controller cookie options
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: isProduction,
-  sameSite: isProduction ? "none" : "lax",
+  secure: true,
+  sameSite: "none",
   path: "/",
 };
 

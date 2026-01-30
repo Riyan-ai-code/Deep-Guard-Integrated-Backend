@@ -15,8 +15,8 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: isProduction, // Secure in Prod, Not in Dev
-  sameSite: isProduction ? "none" : "lax", // None for Cross-Site Prod, Lax for Local
+  secure: true, // Secure in Prod, Not in Dev
+  sameSite: "none", // None for Cross-Site Prod, Lax for Local
   path: "/"
 };
 
