@@ -12,7 +12,7 @@ class VideoPreprocessor:
             video_path=video_path,
             output_dir=output_dir,
             video_id=video_id,
-            frames=frames
+            target_count=frames
         )
 
         return stats
