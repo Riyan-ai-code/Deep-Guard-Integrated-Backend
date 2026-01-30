@@ -23,7 +23,7 @@ const githubRoutes = require("./routes/github");
 const supportRoutes = require("./routes/support");
 
 const app = express();
-
+app.set("trust proxy",1)
 /* ------------------ GLOBAL MIDDLEWARE ------------------ */
 
 // 🔥 UPDATE: CORS Configuration to allow Vercel Frontend
