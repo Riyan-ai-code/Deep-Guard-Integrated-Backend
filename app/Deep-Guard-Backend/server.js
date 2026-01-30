@@ -105,16 +105,26 @@ app.use(errorHandler);
 
 /* --------------------- START SERVER --------------------- */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+
+// 1. Capture the server instance
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌍 CORS enabled for: ${allowedOrigins.join(", ")}`);
 
-  // Start Trial Cleanup Job (Run every 1 minute)
+  // Start Trial Cleanup Job
   const { cleanupExpiredTrials } = require("./controllers/trial");
   try {
-    cleanupExpiredTrials(); // Run immediately on startup
+    cleanupExpiredTrials();
     setInterval(cleanupExpiredTrials, 60 * 1000);
   } catch (err) {
     console.error("⚠️ Failed to start trial cleanup job:", err.message);
   }
 });
+
+// 2. 🚀 INCREASE TIMEOUT TO 10 MINUTES (600,000 ms)
+// This prevents the "2-minute crash"
+server.setTimeout(600000); 
+
+// 3. Ensure Keep-Alive matches
+server.keepAliveTimeout = 600000; 
+server.headersTimeout = 601000; // Must be slightly higher than keepAliveTimeout
