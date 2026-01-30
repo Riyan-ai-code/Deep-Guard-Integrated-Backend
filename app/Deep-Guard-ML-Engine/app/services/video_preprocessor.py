@@ -8,7 +8,7 @@ class VideoPreprocessor:
     
     def preprocess_frame(self,video_path:str,output_dir: str, video_id: str, frames: int = 50):
         processor = VideoProcessor(self.config)
-        stats = processor.process_video_strict(
+        stats = processor.process_video_persistent(
             video_path=video_path,
             output_dir=output_dir,
             video_id=video_id,
