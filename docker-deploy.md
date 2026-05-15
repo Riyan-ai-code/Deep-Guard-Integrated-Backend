@@ -10,6 +10,21 @@ docker-compose up --build
 - The backend will be reachable at `http://localhost:5000`.
 - The ML engine runs internally in the compose network at `ml-engine:8000` and is NOT published to the host.
 
+Docker quick start
+------------------
+
+If you want to build and run the two containers manually instead of using Compose, use the Dockerfiles in each service folder:
+
+```bash
+docker build -t deep-guard-backend ./Deep-Guard-Backend
+docker build -t deep-guard-ml-engine ./Deep-Guard-ML-Engine
+docker run --rm -p 8000:8000 deep-guard-ml-engine
+docker run --rm -p 5000:5000 --env-file .env deep-guard-backend
+```
+
+- Start the ML engine first so the backend can reach it.
+- When running without Compose, set `ML_API_URL`, `ML_VIDEO_URL`, and `ML_IMAGE_URL` to the ML engine address reachable from the backend container.
+
 How it works
 ------------
 
